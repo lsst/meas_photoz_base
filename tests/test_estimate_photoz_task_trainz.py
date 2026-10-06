@@ -19,11 +19,48 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 
-from lsst.meas.photoz.base.estimate_photoz_task_trainz import EstimatePhotozTrainZConfig
+import astropy.units as u
+import numpy as np
+from astropy.table import Table
+from rail.core.model import Model as PhotoZModel
+
+from lsst.meas.photoz.base.estimate_photoz_task_trainz import (
+    EstimatePhotozTrainZConfig,
+    EstimatePhotozTrainZTask,
+)
+
+TESTDIR = os.path.abspath(os.path.dirname(__file__))
 
 
 def test_algo_config():
     """Test default initialization of TrainZ config class."""
     config = EstimatePhotozTrainZConfig()
     config.validate()
+
+
+def test_run_trainz() -> None:
+    """Test that trainz runs on plausible data."""
+    path = os.path.join(TESTDIR, "data", "model_inform_train_z_wrap.pickle")
+    model = PhotoZModel.read(path)
+    config = EstimatePhotozTrainZConfig()
+    task = EstimatePhotozTrainZTask(config=config, initInputs={})
+
+    algo_config = task.photoz_algo.config
+    n_data = 173
+    algo_config.chunk_size = int(round(n_data / 3.1))
+    config.freeze()
+    mags = np.linspace(19, 26, n_data)
+    mag_names = algo_config.get_mag_names()
+    data = {column: mags + 0.5 * idx for idx, column in enumerate(mag_names.values())}
+    for band, column in algo_config.get_flux_names().items():
+        data[column] = (data[mag_names[band]] * u.ABmag).to(u.nJy).value
+
+    data["ebv"] = 0.05 * (1 + np.sin(np.arange(n_data)))
+    data = Table(data)
+
+    result = task.run(photoz_model=model, fluxes=data)
+    yvals = result.photoz_ensemble.objdata["yvals"]
+    assert yvals.shape[0] == n_data
+    np.testing.assert_array_compare(np.greater, np.sum(yvals, axis=1), 0)

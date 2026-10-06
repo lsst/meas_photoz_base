@@ -33,6 +33,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
+import qp
 from astropy.table import Table
 from ceci.config import StageConfig as CeciStageConfig
 from ceci.config import StageParameter as CeciParam
@@ -49,6 +50,8 @@ from lsst.pipe.base import (
     Struct,
     Task,
 )
+
+from .utils import chunk_iterator
 
 
 class EstimatePhotozConnections(
@@ -443,6 +446,9 @@ class EstimatePhotozAlgoTask(Task, ABC):
         nondetect_val = self.config.nondetect_val
         # output dict
         mag_dict = {}
+        if object_id_name := self.config.id_col:
+            mag_dict[object_id_name] = fluxes[object_id_name]
+
         # loop over bands, make mags and mag errors and fill dict
         for band in flux_names.keys():
             fluxVals = np.asarray(fluxes[flux_names[band]])
@@ -535,9 +541,16 @@ class EstimatePhotozAlgoTask(Task, ABC):
                 nondetect_val,
             )
 
-        # Pass the mags to RAIL and get back the p(z) pdfs
-        # as a qp.Ensemble object
-        photoz_pdfs = PZFactory.estimate_single_pz(self._stage, mags, n_obj)
+        pz_ensembles: list[qp.Ensemble] = []
+
+        # split processing into chunks to avoid memory issues in rail
+        iterator = chunk_iterator(self.config.chunk_size, mags, n_obj)
+        for a_chunk, chunk_size in iterator:
+            # Pass the mags to RAIL and get back the p(z) pdfs
+            # as a qp.Ensemble object
+            pz_ensembles.append(PZFactory.estimate_single_pz(self._stage, a_chunk, chunk_size))
+
+        photoz_pdfs = qp.concatenate(pz_ensembles)
         return Struct(photoz_ensemble=photoz_pdfs)
 
 

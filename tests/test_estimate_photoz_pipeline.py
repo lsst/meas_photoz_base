@@ -79,11 +79,16 @@ class MeasPzPipelineTestCase(unittest.TestCase):
         assert len(names) == len(all_tasks)
         assert set(tasks) == set([getattr(all_algos, attr) for attr in all_tasks])
 
+        pipeline_patches = {}
+        chunk_size = 10
+
         for algo in names:
             dataset = EstimatePhotozConnections.photoz_model.name.format(algo=algo)
             expected_inputs.append(dataset)
             expected_outputs.append(EstimatePhotozConnections.photoz_ensemble.name.format(algo=algo))
             inputs.append((dataset, {"instrument"}, "PhotozModel", True))
+            pipeline_patches[f"photoz_{algo}:photoz_algo.active.chunk_size"] = chunk_size
+            chunk_size *= 5
 
         tester = PipelineStepTester(
             os.path.join(PIPELINES_DIR, "photoz.yaml"),
@@ -91,5 +96,6 @@ class MeasPzPipelineTestCase(unittest.TestCase):
             inputs,
             expected_inputs=set(expected_inputs),
             expected_outputs=set(expected_outputs),
+            pipeline_patches=pipeline_patches,
         )
         tester.run(butler, self)
